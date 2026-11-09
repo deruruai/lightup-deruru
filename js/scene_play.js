@@ -13,7 +13,9 @@ const ACC = { PERFECT: 1, GOOD: 0.65, MISS: 0 };
 const COMBO_CUTS = [[50, 'nice'], [100, 'great'], [200, 'amazing']];   // 이후 100콤보마다 amazing
 
 // 원근 레인 모양
-const HY = 60, JY = 800, CX = 270, LW = 115, PK = 3;      // 소실점 높이 · 판정선 y · 가운데 x · 레인 폭 · 원근 세기
+let HY = 60;                                             // 소실점 높이 (MV 화면이 위에 있으면 아래로 내림)
+const JY = 800, CX = 270, LW = 115, PK = 3;              // 판정선 y · 가운데 x · 레인 폭 · 원근 세기
+const MV_PANEL = { x: 0, y: 0, w: 540, h: 304 };         // MV 화면 칸 (16:9, 화면 맨 위)
 const scaleAt = p => 1 / (1 + PK * (1 - p));              // p : 0(멀리) → 1(판정선)
 const yAt = sc => HY + (JY - HY) * sc;
 const xAt = (e, sc) => CX + e * LW * sc;                   // e : 레인 가장자리 -2 ~ 2 (가운데 = c - 1.5)
@@ -39,14 +41,66 @@ Scenes.play = {
     Music.load(song);
     const t0 = +(QS.get('seek') || 0);
     const p = Music.playFrom(t0, 1);
-    // MV 배경 (켜져 있고 이 환경에서 유튜브가 되면)
-    if (Save.data.mvOn !== false) Mv.start(song, t0);
-    if (p && p.catch) p.catch(() => { this.blocked = true; });
+    // MV (켜져 있고 이 환경에서 유튜브가 되면) : MV 소리로 플레이하고, 음원은 소리 없이 따라가기만
+    this.mvMaster = false; this.mvT = t0; this.panel = null;
+    if (Save.data.mvOn !== false && Mv.start(song, t0, { muted: false, volume: 100, mode: 'panel', rect: MV_PANEL })) {
+      this.mvMaster = true; this.mvStartAt = performance.now(); Music.el.volume = 0; this.panel = MV_PANEL;
+    }
+    // 화면 배치 : MV 칸이 있으면 정보줄 · 레인을 그 아래로
+
+    if (p && p.catch) p.catch(e => { if (e && e.name === 'NotAllowedError') this.blocked = true; });   // 자동재생이 막혔을 때만
+    this.extendTop = !!this.panel;
+    this.layoutPanel();
+  },
+  // MV 칸은 폰 화면 맨 위에 붙이고, 정보줄 · 레인은 그 아래 남는 공간에 맞춘다 (세로로 긴 폰도 꽉 차게)
+  layoutPanel() {
+    if (!this.panel) { this.extendTop = this.sideMv = false; this.hudY = 0; HY = 60; Cutin.area = { top: 88, bottom: 245, charY: 150, charH: 660 }; return; }
+    // PC · 태블릿 가로 화면 : 게임은 오른쪽, MV 는 왼쪽에 크게
+    this.sideMv = width / height > 1.1 && width - W * S > 420;
+    this.extendTop = !this.sideMv;
+    if (this.sideMv) {
+      let sw = OX - 48, sh = sw * 9 / 16;
+      if (sh > height - 48) { sh = height - 48; sw = sh * 16 / 9; }
+      const xs = (OX - sw) / 2, ys = (height - sh) / 2;
+      this.panel = { x: (xs - OX) / S, y: (ys - OY) / S, w: sw / S, h: sh / S }; Mv.rect = this.panel;
+      this.hudY = 0; HY = 60; Cutin.area = { top: 88, bottom: 245, charY: 150, charH: 660 };
+      return;
+    }
+    // 폰 세로 화면 : MV 칸은 화면 맨 위, 정보줄 · 레인은 그 아래
+    const top = -OY / S;
+    this.panel = { x: 0, y: top, w: 540, h: 304 }; Mv.rect = this.panel;
+    this.hudY = top + 304;
+    HY = (this.hudY + 110 - 200) / 0.75;          // 노트가 정보줄 바로 아래에서 나타나도록
+    Cutin.area = { top: top + 150, bottom: top + 304, charY: this.hudY + 26, charH: Math.min(660, 840 - this.hudY) };
   },
   exit() { Music.stop(); Mv.stop(); Cutin.clear(); },
 
-  // 판정에 쓰는 시간 : 싱크 조절값만큼 보정
-  time() { return Clock.now() - Save.data.offset; },
+  // 판정에 쓰는 시간 : MV 로 플레이할 때는 MV 시간, 아니면 음원 시간 (+ 싱크 조절값)
+  time() { return (this.mvMaster ? this.mvT : Clock.now()) - Save.data.offset; },
+  // 매 프레임 : MV 시간 읽기 · 음원을 MV 에 맞춰 조용히 따라가게 · 문제가 생기면 음원 소리로 전환
+  mvTick() {
+    if (!this.mvMaster) { Mv.sync(Clock.now(), Music.el && !Music.el.paused && this.phase === 'play'); return; }
+    const a = Music.el;
+    if (!Mv.want) return this.mvFallback('MV를 재생할 수 없어서 음원 소리로 계속해요');
+    if (!Mv.showing) {   // 아직 영상이 시작 안 됨
+      if (performance.now() - this.mvStartAt > 5000 && !this.blocked) this.mvFallback('이 기기에서는 MV 소리를 켤 수 없어서 음원 소리로 진행해요');
+      if (!a.paused) a.pause();
+      return;
+    }
+    const v = Mv.time(); if (v !== null) this.mvT = v - Mv.offset(this.song);
+    if (Mv.playing && this.phase === 'play' && this.mvT >= 0 && this.mvT < (a.duration || 1e9)) {
+      if (a.paused) { const q = a.play(); if (q && q.catch) q.catch(() => {}); }
+      if (Math.abs(a.currentTime - this.mvT) > 0.2) a.currentTime = this.mvT;
+    } else if (!a.paused) a.pause();
+  },
+  mvFallback(msg) {
+    this.mvMaster = false;
+    const a = Music.el;
+    try { a.currentTime = Math.max(0, this.mvT); } catch (e) {}
+    a.volume = 1; Music.resume();
+    if (Mv.want) { try { Mv.player.mute(); } catch (e) {} Mv.seekNow(a.currentTime); }
+    Toast.show(msg, 3600);
+  },
 
   // ------------------------------------------------------------ 입력
   press(c) {
@@ -81,7 +135,7 @@ Scenes.play = {
   laneAt(x) { return clamp(Math.floor((x - (CX - 2 * LW)) / LW), 0, 3); },
   onDown(x, y, id, b) {
     if (b) return;
-    if (this.blocked) { this.blocked = false; Music.resume(); Mv.seekNow(Music.el.currentTime); return; }
+    if (this.blocked) { this.blocked = false; Music.resume(); if (this.mvMaster) { try { Mv.player.playVideo(); } catch (e) {} } else Mv.seekNow(Music.el.currentTime); return; }
     if (this.phase === 'play' && y > 380) { const c = this.laneAt(x); this.ptrLane[id] = c; this.press(c); }
     else if (this.phase === 'play') { const ch = this.activeChant(this.time()); if (ch) this.chantTap(ch); }
   },
@@ -100,8 +154,12 @@ Scenes.play = {
     else if (id === 'quit') go('select', { song: this.song, mode: this.mode });
   },
   onHide() { this.pause(); },
-  pause() { if (this.phase !== 'play') return; this.phase = 'paused'; Music.pause(); this.laneDown = [0, 0, 0, 0]; },
-  resume() { if (this.phase !== 'paused') return; this.phase = 'play'; Music.resume(); Mv.seekNow(Music.el.currentTime); },
+  pause() { if (this.phase !== 'play') return; this.phase = 'paused'; Music.pause(); Mv.pause(); this.laneDown = [0, 0, 0, 0]; },
+  resume() {
+    if (this.phase !== 'paused') return; this.phase = 'play';
+    if (this.mvMaster) { try { Mv.player.playVideo(); } catch (e) {} }   // 음원은 MV 를 따라 다시 재생됨
+    else { Music.resume(); Mv.seekNow(Music.el.currentTime); }
+  },
 
   // ------------------------------------------------------------ 판정
   judge(n, res, delta) {
@@ -131,7 +189,7 @@ Scenes.play = {
     if (!kind) return;
     const t = this.time();
     if (this.chants.some(c => t > c.t0 - 1.6 && t < c.t1)) return;   // 떼창 컷인과 겹치지 않게
-    Cutin.show(this.song, kind, `${k} COMBO`, { dur: 1400, compact: true });
+    Cutin.show(this.song, kind, `${k} COMBO`, { dur: 1700, compact: true });
     Sfx.chime();
   },
   activeChant(t) { return this.chants.find(c => t >= c.t0 && t < c.t1 && !c.done) || null; },
@@ -176,7 +234,7 @@ Scenes.play = {
     if (t > this.endT && !this.finishAt) {
       this.finishAt = performance.now();
       if (this.cnt.MISS === 0 && this.N > 0) { Cutin.show(this.song, 'fever', `${this.maxCombo} COMBO · MISS 0`, { label: 'FULL COMBO!', big: true, dur: 2600 }); Sfx.fanfare(); this.fcShown = true; }
-      Music.fadeOut(this.fcShown ? 2400 : 1200);
+      Music.fadeOut(this.fcShown ? 2400 : 1200); Mv.fadeOut(this.fcShown ? 2400 : 1200);
     }
     if (this.finishAt && performance.now() - this.finishAt > (this.fcShown ? 2700 : 1300)) this.finish();
   },
@@ -192,15 +250,16 @@ Scenes.play = {
 
   // ------------------------------------------------------------ 그리기
   draw() {
+    this.layoutPanel();
+    this.mvTick();
     const t = this.time(), c = ctx(), song = this.song;
     this.update(t);
-    Mv.sync(Clock.now(), Music.el && !Music.el.paused && this.phase === 'play');
     const beatLen = 60 / this.ch.bpm, beat = (((t - this.ch.ph) / beatLen) % 1 + 1) % 1;
     const chant = this.activeChant(t);
 
     // 1. 무대 배경 (화면 전체에 깔리는 배경은 main.js 가 그림 — 여기서는 같은 그림을 같은 밝기로)
-    this.dim = Mv.showing ? (chant ? 0.25 : 0.45) : (chant ? 0.35 : 0.5);
-    if (!Mv.showing && OX < 1 && OY < 1) { imgCover(IMG['stage_' + song.id], 0, 0, W, H); c.fillStyle = `rgba(10,4,24,${this.dim})`; c.fillRect(0, 0, W, H); }
+    this.dim = chant ? 0.35 : 0.5;
+    if (OX < 1 && OY < 1) { imgCover(IMG['stage_' + song.id], 0, 0, W, H); c.fillStyle = `rgba(10,4,24,${this.dim})`; c.fillRect(0, 0, W, H); }
     Stars.draw(0.5);
     // 박자에 맞춰 번쩍이는 무대 조명
     c.save(); c.globalCompositeOperation = 'lighter';
@@ -212,6 +271,8 @@ Scenes.play = {
     }
     c.restore();
 
+    // 콤보 컷인 캐릭터 (레인 뒤)
+    Cutin.drawBack();
     // 2. 레인
     this.drawLanes(t, beatLen);
     // 3. 노트 (먼 것부터)
@@ -227,6 +288,7 @@ Scenes.play = {
     // 7. 떼창
     this.drawChant(t, beat, chant);
     // 8. 위쪽 정보
+    this.drawPanel();
     this.drawHud(t);
     // 9. 컷인
     Cutin.draw();
@@ -234,8 +296,8 @@ Scenes.play = {
     if (this.blocked) { c.fillStyle = 'rgba(8,4,20,.7)'; c.fillRect(0, 0, W, H); txt('화면을 터치하면 시작해요', W / 2, H / 2, 24, '#fff', 'center', 900, { glow: '#FF3DAA' }); }
     else if (t < 1.6 && this.phase === 'play') {
       const u = t / 1.6;
-      txt(t < 1.1 ? 'READY?' : 'GO!', W / 2, 440, t < 1.1 ? 44 : 60, '#fff', 'center', 900, { italic: true, glow: song.accent, blur: 26, alpha: t < 1.1 ? clamp(t * 3, 0, 1) : 1 - (u - 0.69) / 0.31 });
-      txt(`${song.title}  ·  ${MODES[this.mode].name}`, W / 2, 500, 16, '#fff', 'center', 700, { alpha: clamp(1 - u, 0, 1) });
+      txt(t < 1.1 ? 'READY?' : 'GO!', W / 2, this.panel ? 540 : 440, t < 1.1 ? 44 : 60, '#fff', 'center', 900, { italic: true, glow: song.accent, blur: 26, alpha: t < 1.1 ? clamp(t * 3, 0, 1) : 1 - (u - 0.69) / 0.31 });
+      txt(`${song.title}  ·  ${MODES[this.mode].name}`, W / 2, this.panel ? 600 : 500, 16, '#fff', 'center', 700, { alpha: clamp(1 - u, 0, 1) });
     }
     if (this.phase === 'paused') this.drawPause();
     for (let i = 0; i < 4; i++) this.laneFlash[i] *= 0.85;
@@ -246,7 +308,8 @@ Scenes.play = {
     const c = ctx(), s0 = scaleAt(0) * 0.92, s1 = 1.2;
     // 바닥
     c.beginPath(); c.moveTo(xAt(-2, s0), yAt(s0)); c.lineTo(xAt(2, s0), yAt(s0)); c.lineTo(xAt(2, s1), yAt(s1)); c.lineTo(xAt(-2, s1), yAt(s1)); c.closePath();
-    c.fillStyle = grad(0, yAt(s0), 0, JY, [[0, 'rgba(20,8,40,0)'], [0.3, 'rgba(20,8,40,.55)'], [1, 'rgba(20,8,40,.75)']]); c.fill();
+    const fa = 1 - 0.6 * Cutin.backAlpha();   // 컷인 캐릭터가 나오는 동안 레인 바닥을 투명하게
+    c.fillStyle = grad(0, yAt(s0), 0, JY, [[0, 'rgba(20,8,40,0)'], [0.3, `rgba(20,8,40,${.55 * fa})`], [1, `rgba(20,8,40,${.75 * fa})`]]); c.fill();
     // 누른 레인 빛기둥
     for (let i = 0; i < 4; i++) {
       const a = Math.max(this.laneDown[i] > 0 ? 0.85 : 0, this.laneFlash[i] * 0.7);
@@ -361,7 +424,7 @@ Scenes.play = {
     // 콤보
     if (this.combo >= 3) {
       const c = ctx(), sc = 1 + this.comboPulse * 0.18;
-      c.save(); c.translate(W / 2, 400); c.scale(sc, sc);
+      c.save(); c.translate(W / 2, this.panel ? 530 : 400); c.scale(sc, sc);
       txt('COMBO', 0, -40, 14, '#fff', 'center', 900, { alpha: 0.85, glow: '#FF3DAA' });
       txt(String(this.combo), 0, 2, 62, '#fff', 'center', 900, { italic: true, stroke: 'rgba(60,10,80,.7)', sw: 8, glow: '#FF3DAA', blur: 24 });
       c.restore();
@@ -395,13 +458,28 @@ Scenes.play = {
     }
   },
 
+  // MV 화면 칸 : 영상이 재생 중이면 캔버스에 구멍을 내서 뒤의 유튜브가 보이게
+  drawPanel() {
+    const P = this.panel; if (!P) return;
+    const c = ctx();
+    if (this.sideMv) { c.save(); c.shadowColor = rgba(this.song.accent, .8); c.shadowBlur = 40; rrect(P.x - 6, P.y - 6, P.w + 12, P.h + 12, 16, '#05020c', rgba(this.song.accent, .9), 3); c.restore(); }
+    if (Mv.showing) c.clearRect(P.x, P.y, P.w, P.h);
+    else {
+      c.fillStyle = '#05020c'; c.fillRect(P.x, P.y, P.w, P.h);
+      imgCover(IMG['stage_' + this.song.id], P.x, P.y, P.w, P.h, 0.5);
+      txt(Mv.want ? 'MV 불러오는 중…' : 'MV 없이 진행 중', W / 2, P.y + P.h / 2, 15, '#fff', 'center', 700);
+    }
+    if (!this.sideMv) { c.fillStyle = grad(0, 0, W, 0, [[0, this.song.accent2], [1, this.song.accent]]); c.fillRect(0, P.y + P.h - 2, W, 3); }
+  },
   drawHud(t) {
-    const c = ctx(), song = this.song, m = MODES[this.mode];
-    c.fillStyle = grad(0, 0, 0, 110, [[0, 'rgba(8,4,20,.85)'], [1, 'rgba(8,4,20,0)']]); c.fillRect(0, 0, W, 110);
-    btn('pause', 14, 16, 46, 46, (x, y, w, h) => {
+    const c = ctx(), song = this.song, m = MODES[this.mode], Y = this.hudY;
+    if (Y) { c.fillStyle = 'rgba(8,4,20,.88)'; c.fillRect(0, Y + 1, W, 92); c.fillStyle = grad(0, Y + 93, 0, Y + 120, [[0, 'rgba(8,4,20,.88)'], [1, 'rgba(8,4,20,0)']]); c.fillRect(0, Y + 93, W, 27); }
+    else { c.fillStyle = grad(0, 0, 0, 110, [[0, 'rgba(8,4,20,.85)'], [1, 'rgba(8,4,20,0)']]); c.fillRect(0, 0, W, 110); }
+    btn('pause', 14, 16 + Y, 46, 46, (x, y, w, h) => {
       rrect(x, y, w, h, 23, 'rgba(255,255,255,.14)', 'rgba(255,255,255,.4)', 1.5);
       c.fillStyle = '#fff'; c.fillRect(x + 16, y + 14, 5, 18); c.fillRect(x + 25, y + 14, 5, 18);
     });
+    c.save(); c.translate(0, Y);
     txt(song.title, 72, 30, 17, '#fff', 'left', 900);
     rrect(72, 44, 64, 20, 10, rgba(m.color, .3), m.color, 1.5); txt(m.name, 104, 54.5, 11, '#fff', 'center', 900);
     if (AUTO) txt('AUTO', 144, 54.5, 11, '#FFD54F', 'left', 900);
@@ -411,6 +489,7 @@ Scenes.play = {
     this.shownScore += (this.score - this.shownScore) * 0.2;
     txt(String(Math.round(this.shownScore)).padStart(7, '0'), W - 18, 30, 22, '#fff', 'right', 900, { glow: song.accent, blur: 10 });
     txt(`싱크로율 ${this.sync.toFixed(1)}%`, W - 18, 58, 13, '#FFD54F', 'right', 900);
+    c.restore();
   },
 
   drawPause() {

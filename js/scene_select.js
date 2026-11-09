@@ -98,7 +98,7 @@ Scenes.select = {
     const mvOk = Mv.available, mvOn = Save.data.mvOn !== false;
     btn('mvToggle', 24, 902, 238, 44, (x, y, w, h) => {
       rrect(x, y, w, h, 14, mvOk && mvOn ? rgba(s.accent2, .3) : 'rgba(255,255,255,.07)', mvOk && mvOn ? s.accent2 : 'rgba(255,255,255,.25)', 1.5);
-      txt('▶ MV 배경', x + 16, y + h / 2 + 1, 14, mvOk ? '#fff' : '#8f86a8', 'left', 900);
+      txt('▶ MV 화면', x + 16, y + h / 2 + 1, 14, mvOk ? '#fff' : '#8f86a8', 'left', 900);
       txt(!mvOk ? (Mv.failed ? '사용 불가' : '준비 중…') : mvOn ? 'ON' : 'OFF', x + w - 16, y + h / 2 + 1, 14, mvOk && mvOn ? '#FFD54F' : '#8f86a8', 'right', 900);
     });
     btn('mvSync', 278, 902, 238, 44, (x, y, w, h) => {

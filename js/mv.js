@@ -1,9 +1,9 @@
 // ===========================================================================
 //  mv.js — 데루루 유튜브 MV 를 플레이 화면 뒤에 깔기
 //
-//  · 게임의 시계는 계속 음원(mp3) 이다 → 판정은 MV 와 상관없이 정확하다.
-//  · MV 는 소리를 끄고(음소거) 화면만 쓴다. 매 프레임 "음원 시간 + MV 싱크값" 에 맞춰
-//    영상이 0.35초 넘게 어긋나면 그 자리로 다시 맞춘다 (광고 · 버퍼링 뒤에도 자동 복구).
+//  · MV 가 켜지면 MV 소리로 플레이한다. 이때 게임 시계 = MV 영상 시간 − MV 싱크값,
+//    음원(mp3)은 소리 없이 MV 를 따라가기만 한다 (MV 가 멈추면 노트도 같이 멈춤).
+//  · 휴대폰이 MV 소리 자동재생을 막거나 MV 가 끊기면 → 음원 소리로 바꾸고 MV 는 화면만 (Mv.sync).
 //  · MV 싱크값 = 음원 0초가 MV 영상의 몇 초에 해당하는지 (곡마다 다름)
 //      → data/songs.js 의 mvOffset 기본값, 또는 곡 선택 화면 'MV 싱크 맞추기' 에서 조절한 값
 //  · 유튜브를 쓸 수 없는 곳(파일 더블클릭 · Claude 미리보기 · 인터넷 없음 · 퍼가기 금지 영상)에서는
@@ -105,6 +105,11 @@ const Mv = {
     this.lastSeek = performance.now();
   },
   pause() { if (this.player && this.want) try { this.player.pauseVideo(); } catch (e) {} },
+  fadeOut(ms) {
+    if (!this.player || !this.want) return;
+    let v = 100; const step = 100 / (ms / 50);
+    const id = setInterval(() => { v -= step; try { this.player.setVolume(Math.max(0, v)); } catch (e) {} if (v <= 0) { clearInterval(id); this.pause(); } }, 50);
+  },
   stop() {
     this.want = false; this.playing = false; this.showing = false;
     if (this.player && this.player.stopVideo) try { this.player.stopVideo(); } catch (e) {}

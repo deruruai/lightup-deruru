@@ -31,6 +31,9 @@ function fit() { S = Math.min(width / W, height / H); OX = (width - W * S) / 2; 
 
 function draw() {
   BUTTONS = [];
+  // MV 칸이 있는 플레이 화면은 아래에 붙이고(남는 공간은 전부 위 MV 쪽으로), 나머지 화면은 가운데 정렬
+  OY = scene && scene.extendTop ? (height - H * S) : (height - H * S) / 2;
+  OX = scene && scene.sideMv ? Math.max(0, width - W * S - 24) : (width - W * S) / 2;   // PC 가로 화면 + MV : 게임을 오른쪽으로
   Music.update();
   const c = drawingContext;
   c.setTransform(pixelDensity(), 0, 0, pixelDensity(), 0, 0);
@@ -52,13 +55,15 @@ function draw() {
   Mv.layout();
   c.save();
   c.translate(OX, OY); c.scale(S, S);
-  c.beginPath(); c.rect(0, 0, W, H); c.clip();
+  const top = scene.extendTop ? -OY / S : 0;      // MV 칸이 폰 화면 맨 위까지 올라가도록
+  const left = scene.sideMv ? -OX / S : 0;        // PC : MV 칸이 게임 왼쪽 공간에
+  c.beginPath(); c.rect(left, top, W - left, H - top); c.clip();
   scene.draw((performance.now() - scene.t0) / 1000);
   Toast.draw();
   c.restore();
   // 세로로 긴 폰 : 위 · 아래 남는 곳을 화면 끝 색으로 이어 주기
   if (OY > 1) {
-    if (scene.edgeTop) { c.fillStyle = scene.edgeTop; c.fillRect(0, 0, width, OY + 1); }
+    if (scene.edgeTop && !scene.extendTop) { c.fillStyle = scene.edgeTop; c.fillRect(0, 0, width, OY + 1); }
     if (scene.edgeBottom) { c.fillStyle = scene.edgeBottom; c.fillRect(0, OY + H * S - 1, width, OY + 1); }
   }
 }

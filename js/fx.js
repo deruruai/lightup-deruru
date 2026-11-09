@@ -55,10 +55,11 @@ const CUTIN_STYLE = {
 };
 const Cutin = {
   cur: null,
+  area: { top: 88, bottom: 245, charY: 150, charH: 660 },   // 콤보 컷인이 들어갈 자리 (플레이 화면이 정해 줌)
   show(song, kind, sub = '', opt = {}) {
     const st = CUTIN_STYLE[kind];
     this.cur = { im: IMG[`cut_${song.id}_${kind}`], label: opt.label || st.label, sub, colA: st.colA, colB: st.colB,
-                 t0: performance.now(), dur: opt.dur || 1500, big: !!opt.big, compact: !!opt.compact };
+                 t0: performance.now(), dur: opt.dur || 1500, big: !!opt.big, compact: !!opt.compact, kind };
   },
   draw() {
     const k = this.cur; if (!k) return;
@@ -101,9 +102,10 @@ const Cutin = {
   drawCompact(k, u) {
     const inn = ease.out(clamp(u / 0.2, 0, 1)), out = clamp((u - 0.8) / 0.2, 0, 1);
     const c = ctx(); c.save();
-    c.beginPath(); c.rect(0, 88, W, 157); c.clip();          // 88 ~ 245 : HUD 아래 · 레인 위
+    const A = this.area;
+    c.beginPath(); c.rect(0, A.top, W, A.bottom - A.top); c.clip();   // 기본 88~245 (HUD 아래 · 레인 위) / MV 있을 때 150~304 (MV 화면 아래쪽)
     c.globalAlpha = 1 - out;
-    const by = 148, bh = 70, slide = (1 - inn) * 560 - out * 160;
+    const by = A.top + 60, bh = 70, slide = (1 - inn) * 560 - out * 160;
     // 색 띠
     c.save(); c.translate(slide, 0);
     c.beginPath(); c.moveTo(-20, by + 14); c.lineTo(W + 20, by - 14); c.lineTo(W + 20, by - 14 + bh); c.lineTo(-20, by + 14 + bh); c.closePath();
@@ -111,19 +113,37 @@ const Cutin = {
     c.globalAlpha *= 0.25; c.strokeStyle = '#fff'; c.lineWidth = 2;
     for (let i = -6; i < 24; i++) { c.beginPath(); c.moveTo(i * 26, by + bh + 20); c.lineTo(i * 26 + 60, by - 20); c.stroke(); }
     c.restore();
-    // 캐릭터 상반신 (오른쪽)
-    if (ok(k.im)) {
-      const dw = 196, dh = 157, sw = k.im.naturalWidth, sh = sw * dh / dw;
-      const dx = W - dw + 6 + (1 - inn) * 220 - out * 40;
-      c.save(); c.shadowColor = rgba(k.colA, .9); c.shadowBlur = 16;
-      c.drawImage(k.im, 0, sw * 0.02, sw, sh, dx, 88, dw, dh); c.restore();
-    }
     // 글자 (왼쪽)
     const sc = 1 + 0.18 * Math.max(0, 1 - u / 0.2);
     c.save(); c.translate(22 - (1 - inn) * 300, by + bh / 2 - 2); c.rotate(-0.05); c.scale(sc, sc);
     txt(k.label, 0, -8, 36, '#fff', 'left', 900, { italic: true, stroke: rgba('#2a0838', .9), sw: 8, glow: k.colA, blur: 16 });
     if (k.sub) txt(k.sub, 4, 20, 15, '#fff', 'left', 900, { italic: true, stroke: 'rgba(42,8,56,.8)', sw: 5 });
     c.restore();
+    c.restore();
+  },
+  // 콤보 컷인 캐릭터 : 레인 '뒤'에 크게 그린다 → 캐릭터는 크게 보이고 노트는 그 위로 그대로 보임
+  //   nice · amazing 은 오른쪽, great 은 왼쪽에서 등장
+  backAlpha() {
+    const k = this.cur; if (!k || !k.compact) return 0;
+    const u = (performance.now() - k.t0) / k.dur; if (u >= 1) return 0;
+    return Math.min(clamp(u / 0.15, 0, 1), clamp((1 - u) / 0.2, 0, 1));
+  },
+  drawBack() {
+    const k = this.cur; if (!k || !k.compact || !ok(k.im)) return;
+    const u = (performance.now() - k.t0) / k.dur; if (u >= 1) return;
+    const a = this.backAlpha(), inn = ease.out(clamp(u / 0.22, 0, 1));
+    const left = k.kind === 'great', h = this.area.charH, w = h * k.im.naturalWidth / k.im.naturalHeight;
+    const cx = left ? 150 : W - 150, dir = left ? -1 : 1;
+    const x = cx - w / 2 + dir * (1 - inn) * 220, y = this.area.charY + (1 - inn) * 30;
+    const zoom = 1 + 0.04 * u;
+    const c = ctx(); c.save(); c.globalAlpha = a * 0.88;   // 노트가 잘 보이도록 살짝만 비치게
+    // 뒤쪽 빛
+    const g = c.createRadialGradient(cx, 430, 30, cx, 430, 360);
+    g.addColorStop(0, rgba(k.colA, .55)); g.addColorStop(1, rgba(k.colA, 0));
+    c.fillStyle = g; c.fillRect(0, 90, W, 720);
+    c.translate(cx, y + h / 2); c.scale(zoom, zoom); c.translate(-cx, -(y + h / 2));
+    c.shadowColor = rgba(k.colB, .9); c.shadowBlur = 24;
+    c.drawImage(k.im, x, y, w, h);
     c.restore();
   },
   clear() { this.cur = null; },
