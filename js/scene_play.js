@@ -157,6 +157,7 @@ Scenes.play = {
   pause() { if (this.phase !== 'play') return; this.phase = 'paused'; Music.pause(); Mv.pause(); this.laneDown = [0, 0, 0, 0]; },
   resume() {
     if (this.phase !== 'paused') return; this.phase = 'play';
+    this.lastMove = performance.now();
     if (this.mvMaster) { try { Mv.player.playVideo(); } catch (e) {} }   // 음원은 MV 를 따라 다시 재생됨
     else { Music.resume(); Mv.seekNow(Music.el.currentTime); }
   },
@@ -230,8 +231,14 @@ Scenes.play = {
         c.resT = performance.now();
       }
     }
-    // 끝
-    if (t > this.endT && !this.finishAt) {
+    // 끝 : 마지막 노트가 곡 끝에 바짝 붙어 있으면 음원/MV 가 먼저 끝나 시계가 멈출 수 있다 → 멈춤을 감지해서 결과로
+    const a = Music.el, dur = a && isFinite(a.duration) ? a.duration : 0;
+    if (dur && this.endT > dur - 0.05) this.endT = dur - 0.05;
+    const nowMs = performance.now();
+    if (this.lastT === undefined || Math.abs(t - this.lastT) > 1e-3) { this.lastT = t; this.lastMove = nowMs; }
+    const stalled = nowMs - this.lastMove > 1500 && (a.ended || Mv.ended || t > this.endT - 4);
+    if (stalled && !this.finishAt) for (const n of this.notes) { if (n.st === 1) this.judge(n, n.head, n.delta); else if (n.st === 0) this.judge(n, 'MISS', 0); }
+    if ((t > this.endT || stalled) && !this.finishAt) {
       this.finishAt = performance.now();
       if (this.cnt.MISS === 0 && this.N > 0) { Cutin.show(this.song, 'fever', `${this.maxCombo} COMBO · MISS 0`, { label: 'FULL COMBO!', big: true, dur: 2600 }); Sfx.fanfare(); this.fcShown = true; }
       Music.fadeOut(this.fcShown ? 2400 : 1200); Mv.fadeOut(this.fcShown ? 2400 : 1200);

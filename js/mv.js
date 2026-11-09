@@ -52,7 +52,7 @@ const Mv = {
   // 재생 시작 : songT = 지금 음원 시간. 반드시 터치 안에서 부른다 (휴대폰 자동재생 제한)
   start(song, songT, opt = {}) {
     if (!this.available || this.bad[song.id] || !song.youtubeId) return false;
-    this.song = song; this.want = true; this.playing = false; this.showing = false;
+    this.song = song; this.want = true; this.playing = false; this.showing = false; this.ended = false;
     this.mode = opt.mode || 'cover'; this.rect = opt.rect || null; this.muted = opt.muted !== false;
     const el = document.getElementById('mv'); el.style.display = 'block'; el.style.opacity = '0';
     try {
@@ -64,6 +64,7 @@ const Mv = {
   },
   onState(s) {   // 1 재생 · 2 일시정지 · 3 버퍼링 · 0 끝
     this.playing = s === 1;
+    this.ended = s === 0;
     if (s === 1 && this.want) { this.showing = true; document.getElementById('mv').style.opacity = '1'; }
   },
   onError(code) {
